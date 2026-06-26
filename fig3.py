@@ -3,6 +3,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import os
 from matplotlib.colors import to_hex
+from graph_drawing import draw_oriented_edges
 
 def sheaf_laplacian(G, alpha):
     G = nx.convert_node_labels_to_integers(G)
@@ -83,63 +84,31 @@ plt.rc('mathtext', fontset='dejavusans')
 
 # === Figure 1: Order parameter and eigenvalues ===
 fig, ax = plt.subplots(figsize=(5, 3.4))
-axb = ax.twinx()
 
 # Dense eigenvalues (background)
-eigen_line, = axb.plot(alphas_dense, eigenvalues_dense, linestyle='-', alpha=1,
-                       color="#001aff", label=r'$\lambda_1$')
+eigen_line, = ax.plot(alphas_dense, eigenvalues_dense, linestyle='-', alpha=1,
+                      color="#001aff", label=r'$\lambda_1$')
 
-color = "#ff5900"
-order_line, = ax.plot(
-    alphas, R_values[mode_indices[0]],
-    linestyle='-', linewidth=1.3, alpha=1,
-    color=color, marker='o', markersize=5,
-    markerfacecolor='none', markeredgecolor=color,
-    label=r'$R_1$'
-)
-
-ax.set_zorder(axb.get_zorder() + 1)
-ax.patch.set_visible(False)
+# Critical vertical line
+ax.axvline(np.pi/3, color='gray', linestyle='-', linewidth=1, alpha=0.5)
 
 # Remove top and right spines
-for spine_ax in (ax, axb):
-    spine_ax.spines['top'].set_visible(False)
-    spine_ax.spines['right'].set_visible(False)
-
-# Keep right spine of axb for the secondary y-axis tick marks
-axb.spines['right'].set_visible(True)
-axb.spines['top'].set_visible(False)
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
 
 ax.set_xlabel("$\\alpha$", fontsize=15)
-ax.set_ylabel("$R_1$", fontsize=15, labelpad=-5)
+ax.set_ylabel("$\\lambda_1$", fontsize=15)
 ax.set_xlim(0, np.pi)
-ax.set_xticks([0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi])
-ax.set_xticklabels([r"$0$", r"$\frac{\pi}{4}$", r"$\frac{\pi}{2}$",
-                    r"$\frac{3\pi}{4}$", r"$\pi$"])
-ax.set_ylim(0, 1.02)
-ax.set_yticks([0, 0.3, 0.7, 1.0])
-ax.set_yticklabels([r"$0$", r"$0.3$", r"$0.7$", r"$1$"])
+ax.set_xticks([0, np.pi/4, np.pi/3, np.pi/2, 3*np.pi/4, np.pi])
+ax.set_xticklabels([r"$0$", r"$\frac{\pi}{4}$", r"$\frac{\pi}{3}$",
+                    r"$\frac{\pi}{2}$", r"$\frac{3\pi}{4}$", r"$\pi$"])
 
-axb.set_ylabel("$\\lambda_1$", fontsize=15)
-axb.set_ylim(0, 0.4)
-axb.set_yticks(np.arange(0, 0.6, 0.2))
-axb.set_yticklabels([r"$0$", r"$0.2$", r"$0.4$"])
+ax.set_ylim(0, 0.4)
+ax.set_yticks(np.arange(0, 0.6, 0.2))
+ax.set_yticklabels([r"$0$", r"$0.2$", r"$0.4$"])
 
-ax.text(-0.15, 1.1, "b", fontsize=13, ha='center', va='center',
-         transform=ax.transAxes, color='black', fontweight='bold', 
-         fontname='DejaVu Sans')
-
-# Legend
-lines = [order_line, eigen_line]
-labels_leg = [l.get_label() for l in lines]
-ax.legend(lines, labels_leg, loc='center', bbox_to_anchor=(0.7, 0.9), frameon=False)
-
-plt.tight_layout()
-plt.savefig("fig3.pdf", dpi=300, bbox_inches='tight')
-
-
-# === Figure 2: Graph structure ===
-fig2, ax2 = plt.subplots(figsize=(3, 3))
+# === Inset: graph structure ===
+ax_inset = fig.add_axes([0.35, 0.45, 0.6, 0.6])  # [left, bottom, width, height] in figure coords
 
 pos = {
     0: np.array([0, 0]),
@@ -159,44 +128,24 @@ for i, coord in enumerate(pentagon_coords, start=3):
     pos[i] = np.array(coord)
 
 node_labels = {i: str(i + 1) for i in G.nodes()}
-node_colors = build_node_colors(NODE_COLORMAP)
-graph_node_colors = [node_colors[node + 1] for node in G.nodes()]
-
-nx.draw_networkx_edges(G, pos=pos, ax=ax2, width=2.2, edge_color='black')
+draw_oriented_edges(G, pos=pos, ax=ax_inset, width=2, edge_color='black')
 nx.draw_networkx_nodes(
     G,
     pos=pos,
-    ax=ax2,
-    node_color=graph_node_colors,
-    node_size=400,
+    ax=ax_inset,
+    node_color="#FFFFFF",
+    node_size=300,
     linewidths=2,
     edgecolors='black',
 )
-for node, label in node_labels.items():
-    label_color = "white" if node in {0, 1, 2, 3, 4, 5, 6, 7} else "black"
-    x, y = pos[node]
-    ax2.text(
-        x,
-        y,
-        label,
-        fontsize=10,
-        color=label_color,
-        ha='center',
-        va='center',
-        fontweight='black',
-        fontname='DejaVu Sans',
-    )
+nx.draw_networkx_labels(G, pos=pos, labels=node_labels, ax=ax_inset,
+                        font_size=9, font_color='black', font_weight='bold')
 
-
-ax2.text(0, 0.9, "a", fontsize=12, ha='center', va='center',
-         transform=ax2.transAxes, color='black', fontweight='bold', 
-         fontname='DejaVu Sans')
-
-ax2.axis('off')
-ax2.set_aspect('equal')
-ax2.margins(0.25)
-for artist in ax2.get_children():
+ax_inset.axis('off')
+ax_inset.set_aspect('equal')
+ax_inset.margins(0.25)
+for artist in ax_inset.get_children():
     artist.set_clip_on(False)
 
 plt.tight_layout()
-plt.savefig("fig3_graph.pdf", dpi=300, bbox_inches='tight')
+plt.savefig("fig3.pdf", dpi=300, bbox_inches='tight')

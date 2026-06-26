@@ -1,7 +1,13 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyArrowPatch
+from matplotlib.colors import to_hex
+from graph_drawing import draw_oriented_edges
+
+
+RANDOM_SEED = 10 #np.random.randint(0, 20)
+print(f"Random seed for graph generation: {RANDOM_SEED}")
+
 
 def sheaf_laplacian(G, alpha):
     G = nx.convert_node_labels_to_integers(G)
@@ -11,20 +17,98 @@ def sheaf_laplacian(G, alpha):
 
     B = np.zeros((m, n), dtype=complex)
     for e, (i, j) in enumerate(edges):
+        # orientation: i -> j
         B[e, i] = 1
         B[e, j] = -np.exp(1j * alpha)
 
     L = B.conj().T @ B
     return L
 
+
 def order_parameter(v):
     phases = np.angle(v)
     return np.abs(np.mean(np.exp(1j * phases)))
 
+
+def random_cactus_graph(seed=RANDOM_SEED, n_blocks=5):
+    """
+    Build a connected cactus by attaching cycles or bridge paths to one
+    existing anchor vertex. Every new cycle uses fresh vertices except for
+    its anchor, so no edge can belong to two different cycles.
+    """
+    rng = np.random.default_rng(seed)
+    G = nx.Graph()
+    G.add_node(0)
+
+    next_node = 1
+    cycle_blocks = 0
+
+    for block_index in range(n_blocks):
+        anchor = int(rng.choice(list(G.nodes())))
+        must_add_cycle = cycle_blocks < 3 and block_index >= n_blocks - 3
+        add_cycle = must_add_cycle or rng.random() < 0.72
+
+        if add_cycle:
+            cycle_length = int(rng.integers(3, 7))
+            new_nodes = list(range(next_node, next_node + cycle_length - 1))
+            next_node += cycle_length - 1
+
+            cycle_nodes = [anchor] + new_nodes
+            cycle_edges = list(zip(cycle_nodes, cycle_nodes[1:]))
+            cycle_edges.append((cycle_nodes[-1], anchor))
+            G.add_edges_from(cycle_edges)
+            cycle_blocks += 1
+        else:
+            path_length = int(rng.integers(1, 4))
+            previous = anchor
+            for _ in range(path_length):
+                G.add_edge(previous, next_node)
+                previous = next_node
+                next_node += 1
+
+    return nx.convert_node_labels_to_integers(G)
+
+
+def is_cactus_graph(G):
+    cycles = nx.cycle_basis(G)
+    cycle_edges = []
+
+    for cycle in cycles:
+        edges = {
+            tuple(sorted((cycle[i], cycle[(i + 1) % len(cycle)])))
+            for i in range(len(cycle))
+        }
+        cycle_edges.append(edges)
+
+    for i, edges_i in enumerate(cycle_edges):
+        for edges_j in cycle_edges[i + 1:]:
+            if edges_i & edges_j:
+                return False
+
+    return nx.is_connected(G)
+
+
+def build_node_colors(G, cmap_name):
+    cmap = plt.get_cmap(cmap_name)
+    n_nodes = G.number_of_nodes()
+    samples = np.linspace(0.08, 0.88, n_nodes)
+    node_colors = {0: "#000000"}
+
+    for node, sample in zip(sorted(G.nodes())[1:], samples[1:]):
+        node_colors[node] = to_hex(cmap(sample))
+
+    return node_colors
+
+
+def graph_layout(G):
+    pos = nx.kamada_kawai_layout(G)
+    return {node: np.asarray(coords) for node, coords in pos.items()}
+
+
 # Graph definition
-n_nodes = 5
-G = nx.cycle_graph(n_nodes)
-n_nodes = G.number_of_nodes()
+G = random_cactus_graph()
+if not is_cactus_graph(G):
+    raise RuntimeError("The generated graph is not a cactus graph.")
 
 alphas = np.linspace(0, np.pi, 99)[1:-1]
 mode_indices = [0]
@@ -35,16 +119,18 @@ eigenvalues = {k: [] for k in mode_indices}
 for alpha in alphas:
     L = sheaf_laplacian(G, alpha)
     vals, vecs = np.linalg.eigh(L)
+
     idxs = np.argsort(vals)
     vals = vals[idxs]
     vecs = vecs[:, idxs]
+
     for k in mode_indices:
         v = vecs[:, k]
         R_values[k].append(order_parameter(v))
         eigenvalues[k].append(vals[k].real)
 
 # Dense alpha grid for eigenvalues only
-alphas_dense = np.linspace(0, np.pi, 100000)[1:-1]
+alphas_dense = np.linspace(0, np.pi, 10000)[1:-1]
 eigenvalues_dense = []
 
 for alpha in alphas_dense:
@@ -53,92 +139,69 @@ for alpha in alphas_dense:
     vals_sorted = np.sort(vals.real)
     eigenvalues_dense.append(vals_sorted[mode_indices[0]])
 
-eigen_arr = np.array(eigenvalues_dense)
-diff_eigen = np.abs(np.diff(eigen_arr))
-idx_crit = np.argmax(diff_eigen)
-alpha_crit = alphas_dense[idx_crit + 1]
+eigenvalues_dense = np.array(eigenvalues_dense)
 
-print(f"Critical alpha from abrupt eigenvalue change: {alpha_crit}")
+plt.rc("font", family="Helvetica", size=12)
+plt.rc("mathtext", fontset="dejavusans")
 
-plt.rc('font', family='Helvetica', size=12)
-plt.rc('mathtext', fontset='dejavusans')
-
-# === Single figure ===
+# === Figure 1: Order parameter and eigenvalues ===
 fig, ax = plt.subplots(figsize=(5, 3.4))
-axb = ax.twinx()
 
 # Dense eigenvalues (background)
-eigen_line, = axb.plot(alphas_dense, eigenvalues_dense, linestyle='-', alpha=1,
-                       color="#001aff", label=r'$\lambda_1$')
-
-# Critical vertical line
-axb.axvline(alpha_crit, color='gray', linestyle='-', linewidth=1, alpha=0.5,
-            label=f'Critical $\\alpha$ = {alpha_crit:.2f}')
-
-color = "#ff5900"
-order_line, = ax.plot(
-    alphas, R_values[mode_indices[0]],
-    linestyle='-', linewidth=1.3, alpha=1,
-    color=color, marker='o', markersize=5,
-    markerfacecolor='none', markeredgecolor=color,
-    label=r'$R_1$'
+eigen_line, = ax.plot(
+    alphas_dense,
+    eigenvalues_dense,
+    linestyle="-",
+    alpha=1,
+    color="#001aff",
+    label=r"$\lambda_1$",
 )
 
-ax.set_zorder(axb.get_zorder() + 1)
-ax.patch.set_visible(False)
+# Remove top and right spines
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
 
-# Remove top and right spines on both axes
-for spine_ax in (ax, axb):
-    spine_ax.spines['top'].set_visible(False)
-    spine_ax.spines['right'].set_visible(False)
-
-# Keep right spine of axb for the secondary y-axis tick marks
-axb.spines['right'].set_visible(True)
-axb.spines['top'].set_visible(False)
-
-ax.set_xlabel("$\\alpha$", fontsize=15)
-ax.set_ylabel("$R_1$", fontsize=15, labelpad=-5)
+ax.set_xlabel(r"$\alpha$", fontsize=15)
+ax.set_ylabel(r"$\lambda_1$", fontsize=15)
 ax.set_xlim(0, np.pi)
-ax.set_xticks([0, np.pi/4, alpha_crit, np.pi/3, np.pi/2, 3*np.pi/4, np.pi])
-ax.set_xticklabels([r"$0$", r"$\frac{\pi}{4}$", r"$\alpha_{c}$",
-                    r"$\frac{\pi}{3}$", r"$\frac{\pi}{2}$",
-                    r"$\frac{3\pi}{4}$", r"$\pi$"])
-ax.set_ylim(0, 1.02)
-ax.set_yticks([0, 0.3, 0.7, 1.0])
-ax.set_yticklabels([r"$0$", r"$0.3$", r"$0.7$", r"$1$"])
+ax.set_xticks([0, np.pi / 4, np.pi / 2, 3 * np.pi / 4, np.pi])
+ax.set_xticklabels([
+    r"$0$",
+    r"$\frac{\pi}{4}$",
+    r"$\frac{\pi}{2}$",
+    r"$\frac{3\pi}{4}$",
+    r"$\pi$",
+])
 
-axb.set_ylabel("$\\lambda_1$", fontsize=15)
-axb.set_ylim(0, 0.4)
-axb.set_yticks([0, 0.2, 0.4])
-axb.set_yticklabels([r"$0$", r"$0.2$", r"$0.4$"])
-
-# Legend
-lines = [order_line, eigen_line]
-labels_leg = [l.get_label() for l in lines]
-ax.legend(lines, labels_leg, loc='center', bbox_to_anchor=(0.7, 0.9), frameon=False)
+lambda_ylim = max(0.05, 1.08 * float(np.max(eigenvalues_dense)))
+ax.set_ylim(0, lambda_ylim)
+ax.set_yticks([0, lambda_ylim / 2, lambda_ylim])
+ax.set_yticklabels([r"$0$", f"{lambda_ylim / 2:.2f}", f"{lambda_ylim:.2f}"])
 
 # === Inset: graph structure ===
-# Place the inset in the lower-right region of the plot (axes-fraction coordinates)
-ax_inset = fig.add_axes([0.38, 0.38, 0.45, 0.45])  # [left, bottom, width, height] in figure coords
-
-pos = nx.circular_layout(G)
-theta = 1.57
-rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
-                             [np.sin(theta),  np.cos(theta)]])
-rotated_pos = {node: rotation_matrix @ pos[node] for node in G.nodes()}
-
+ax_inset = fig.add_axes([0.2, 0.6, 0.99, 0.99])  # [left, bottom, width, height] in figure coords
+pos = graph_layout(G)
 node_labels = {i: str(i + 1) for i in G.nodes()}
 
-nx.draw_networkx_edges(G, pos=rotated_pos, ax=ax_inset, width=2, edge_color='black')
-nx.draw_networkx_nodes(G, pos=rotated_pos, ax=ax_inset, node_color="#FFFFFF",
-                       node_size=300, linewidths=2, edgecolors='black')
-nx.draw_networkx_labels(G, pos=rotated_pos, labels=node_labels, ax=ax_inset,
-                        font_size=9, font_color='black', font_weight='bold')
-ax_inset.axis('off')
-ax_inset.set_aspect('equal')
-ax_inset.margins(0.25)  # prevent node cutoff at borders
+draw_oriented_edges(G, pos=pos, ax=ax_inset, width=2, edge_color="black")
+nx.draw_networkx_nodes(
+    G,
+    pos=pos,
+    ax=ax_inset,
+    node_color="#FFFFFF",
+    node_size=300,
+    linewidths=2,
+    edgecolors="black",
+)
+nx.draw_networkx_labels(G, pos=pos, labels=node_labels, ax=ax_inset,
+                        font_size=9, font_color="black", font_weight="bold")
+
+ax_inset.axis("off")
+ax_inset.set_aspect("equal")
+ax_inset.margins(0.25)
 for artist in ax_inset.get_children():
     artist.set_clip_on(False)
 
 plt.tight_layout()
-plt.savefig("fig1.pdf", dpi=300, bbox_inches='tight')
+plt.savefig("fig1.pdf", dpi=300, bbox_inches="tight")
+plt.close(fig)
